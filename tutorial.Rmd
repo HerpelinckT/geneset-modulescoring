@@ -1,0 +1,192 @@
+---
+title: "Bulk RNA-seq data analysis and geneset scoring demonstration"
+output:
+  html_document:
+    df_print: paged
+---
+
+## 0. Setting up environment and loading data
+
+```{r}
+suppressPackageStartupMessages({
+    library(DESeq2)
+    library(tidyverse)
+    library(ggrepel)
+    library(patchwork)
+    library(Matrix)
+})
+```
+
+```{r}
+counts <- read.delim(file = "data/ID_count_matrix.tsv", sep = "\t", row.names = 1)
+names(counts) <- gsub(" ", "", names(counts))
+```
+
+```{r}
+metadata <- read.delim(file = "data/metadata.txt", sep = "\t", row.names = 1)
+names(metadata) <- gsub(" ", "", names(metadata))
+```
+
+# 1. Analysis using both medium (treatment vs control) and timepoint as variables
+
+The following model is fit using a subset of the data to address the question whether the treatment with C8mod induces a change in gene expression at any time point after the reference level time point (time 0).
+
+## 1.1. Making the model matrix full rank
+
+```{r}
+c8neg_samples <- rownames(metadata[which(metadata$Medium %in% c("C8neg", "DMEM-C")),])
+cols.to.keep <- !names(counts) %in% c8neg_samples
+counts_subset <- counts[, cols.to.keep]
+
+d28_samples <- rownames(metadata[which(metadata$Timepoint == "D28"),])
+cols.to.keep <- !names(counts_subset) %in% d28_samples
+counts_subset <- counts_subset[, cols.to.keep]
+
+agarose_samples <- rownames(metadata[which(metadata$Platform == "Agarose"),])
+cols.to.keep <- !names(counts_subset) %in% agarose_samples
+
+counts_subset <- counts_subset[, cols.to.keep]
+```
+
+```{r}
+rows.to.keep <- which(rownames(metadata) %in% colnames(counts_subset))
+metadata_subset <- metadata[rows.to.keep,]
+write.table(metadata_subset, file = "data/metadata_subset.tsv", sep = "\t", quote = FALSE)
+```
+
+```{r}
+metadata_subset <- read.delim(file = "data/metadata_subset.tsv", header = TRUE, row.names = 1)
+```
+
+```{r}
+dds <- DESeqDataSetFromMatrix(countData = counts_subset,
+                              colData = metadata_subset,
+                              design= ~ Medium + Timepoint + Medium:Timepoint)
+dds
+```
+
+```{r}
+# order chronologically
+dds$Timepoint <- relevel(dds$Timepoint, "D7")
+dds$Timepoint <- relevel(dds$Timepoint, "5h")
+
+levels(dds$Timepoint)
+```
+
+```{r}
+# make sure C8 is the reference
+levels(dds$Medium)
+```
+
+## 1.2. Stabilizing variance
+Many common statistical methods for exploration of multidimensional data such as PCA work best for data that genereally has the same range of variance at different ranges of the mean values. For RNA-seq counts however, the expected variance grows with the mean. Consequently, if one performs PCA directly on a matrix of counts or normalized counts the resulting plot typically depends mostly on the genes with highest counts because they show the largest absolute differences between samples.
+
+Here, we will use the regularized-logarithm transformation or rlog.
+
+```{r}
+rld <- rlog(dds, fitType = "local", blind = FALSE)
+```
+
+In the above function calls, we specified blind = FALSE, which means that differences between the variables in the design will not contribute to the expected variance-mean trend of the experiment. 
+
+## 1.3. PCA
+
+```{r}
+pca.1 <- plotPCA(rld, intgroup = c("Medium")) + ggtitle("Medium") +
+              theme_bw() + 
+              theme(panel.border = element_blank(), 
+                    panel.grid.major = element_blank(),
+                    panel.grid.minor = element_blank(), 
+                    axis.line = element_line(colour = "black")) +
+              theme(plot.title = element_text(hjust = 0.5, size = 22)) +
+              theme(legend.text = element_text(size = 16)) +
+              theme(legend.title = element_blank()) +
+              theme(axis.text.x = element_text(size = 14),
+                    axis.text.y = element_text(size = 14),
+                    axis.title.x = element_text(size = 16),
+                    axis.title.y = element_text(size = 16)) 
+              
+pca.2 <- plotPCA(rld, intgroup = c("Timepoint")) + ggtitle("Timepoint")  +
+              theme_bw() + 
+              theme(panel.border = element_blank(), 
+                    panel.grid.major = element_blank(),
+                    panel.grid.minor = element_blank(), 
+                    axis.line = element_line(colour = "black")) +
+              theme(plot.title = element_text(hjust = 0.5, size = 22)) +
+              theme(legend.text = element_text(size = 16)) +
+              theme(legend.title = element_blank()) +
+              theme(axis.text.x = element_text(size = 14),
+                    axis.text.y = element_text(size = 14),
+                    axis.title.x = element_text(size = 16),
+                    axis.title.y = element_text(size = 16)) 
+
+pca.1 + pca.2
+```
+
+The following chunk performs the likelihood ratio test, where we remove the medium-specific differences over time. Genes with small p-values from this test are those which, at one or more time points after time 0 showed a medium-specific effect. Note therefore that this will not give small p-values to genes which moved up or down over time in the same way in both media.
+
+```{r}
+dds <- DESeq(dds, test = "LRT", fitType = "local", reduced = ~ Medium + Timepoint)
+res <- results(dds)
+```
+
+```{r}
+summary(res)
+```
+
+```{r}
+# save normalized matrix for GEO
+write.table(counts(dds, normalized = TRUE), file = "data/normalized_counts.tsv", sep = "\t", quote = FALSE)
+```
+
+## 2. Calling the gene set scoring function
+
+The genesetscoring function is designed to take a character vector of gene symbols and calculate the average expression levels of each program (gene ontology) per sample, subtracted by the aggregated expression of control feature sets.
+All analyzed features are binned based on averaged expression, and the control features are randomly selected from each bin.
+
+Input argument explanation:
+
+- dds: a DESeqDataSet
+- features: a character vector of gene names
+- pool: list of features to check expression levels against, defaults to `rownames(x = counts(dds))`.
+- nbin: number of bins of aggregate expression levels for all analyzed features
+- ctrl: number of control features selected from the same bin per analyzed feature
+- name: name for the expression program
+- seed: set a random seed. If NULL, no seed is set. 
+
+```{r}
+source("modulescoring/geneset_modulescoring.R")
+```
+
+Let's test the module scoring for a random gene set, which contains a character not present in the gene lists.
+
+```{r}
+features <- c("ALPL", "IHH", "COL2A1", "qwerty") # Random test features
+
+
+dds <- AddGeneSetScore(dds, 
+                       features = features,
+                       ctrl = 5,
+                       name = 'Test_Features'
+                       )
+```
+
+The incorrect "gene" was dropped and a new column appears in `colData` containing scores per sample ranging from 0 to 1. The column name is defined by the `name` argument. 
+
+```{r}
+colData(dds)
+```
+
+```{r}
+min(dds$Test_Features1)
+max(dds$Test_Features1)
+```
+
+```{r}
+ggplot(as.data.frame(colData(dds)), aes(x = Timepoint, y = Test_Features1, color = Medium)) + 
+    geom_point() +
+    theme_bw() + 
+    ylab("Regulation of random test set") + 
+    theme(text = element_text(size = 18))
+```
+

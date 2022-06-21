@@ -2,7 +2,7 @@
 
 A function to calculate gene module activity based on the approach described by [Tirosh _et al._](10.1126/science.aad0501). This is a repurposing of the _AddModuleScore()_ function from [Seurat](https://satijalab.org/seurat/index.html), adapted for bulk RNA sequencing data processed with [DESeq2](http://dx.doi.org/10.1186/s13059-014-0550-8).
 
-## Install
+## Installation
 
 Copy the contents of `geneset_modulescoring.R` into your R session or save it locally to call using `source()`. This is demonstrated in the tutorial notebooks.
 

@@ -13,7 +13,7 @@ The `AddGeneSetScore` function scores samples scored based on the average normal
 Input arguments are:
 
 (_required_)
-- `dds`: a DESeqDataSet
+- `dds`: a `DESeqDataSet`
 - `features`: a character vector of gene names
 
 (_optional_)
@@ -23,8 +23,8 @@ Input arguments are:
 - `name`: name for the expression program
 - `seed`: set a random seed. If `NULL`, no seed is set.
 
-If an input feature is not present in the rowdata of the DESeqDataSet, a warning message will appear and the module score will be calculated using the remaining features (cf. tutorial).
+If an input feature is not present in the `rowData` of the `DESeqDataSet`, a warning message will appear and the module score will be calculated using the remaining features (cf. tutorial).
 
 ## Citation
 
-When using this function, please cite: __reference coming soon__
+When using this function, please cite: Decoene I, Herpelinck T, Geris L, Luyten FP and Papantoniou I (2022) Engineering bone-forming callus organoid implants in a xenogeneic-free differentiation medium. Front. Chem. Eng. 4:892190. doi: [10.3389/fceng.2022.892190](https://www.frontiersin.org/articles/10.3389/fceng.2022.892190/full)
